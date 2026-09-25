@@ -73,7 +73,13 @@ Remove the dummy (or keep it and use a different `DJANGO_PROJECT_FOLDER`):
 
 ```bash
 rm -rf django_project_folder   # only if you are replacing the dummy
-mkdir -p my_shop
+```
+
+Create the outer folder **and** the inner `django_project` directory (Django requires
+the destination to exist):
+
+```bash
+mkdir -p my_shop/django_project
 ```
 
 Create the Django project so `manage.py` ends up in `my_shop/django_project/`:
@@ -84,7 +90,8 @@ docker run --rm \
   -w /out \
   python:3.12-slim \
   bash -c "pip install --no-cache-dir Django==5.1.3 \
-    && django-admin startproject config django_project"
+    && django-admin startproject config django_project \
+    && chown -R $(id -u):$(id -g) django_project"
 ```
 
 That produces:
