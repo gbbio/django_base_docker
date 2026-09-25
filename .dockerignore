@@ -1,0 +1,15 @@
+.git
+.gitignore
+.env
+.env.example
+README.md
+**/__pycache__
+**/*.pyc
+**/*.pyo
+**/*.sqlite3
+.venv
+venv
+.mypy_cache
+.pytest_cache
+.idea
+.vscode

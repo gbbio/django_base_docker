@@ -1,0 +1,90 @@
+services:
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-django_db}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      # Host port defaults to 5433 to avoid clashing with a local Postgres
+      - "${POSTGRES_PORT:-5433}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-django_db}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  pgadmin:
+    image: dpage/pgadmin4:8
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL:-admin@admin.com}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD:-admin}
+    ports:
+      - "${PGADMIN_PORT:-5050}:80"
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+      - ./docker/pgadmin/servers.json:/pgadmin4/servers.json:ro
+    depends_on:
+      db:
+        condition: service_healthy
+
+  django_web:
+    build:
+      context: .
+      dockerfile: ./docker/django_web/Dockerfile
+      args:
+        # requirements.txt lives next to the inner project folder
+        REQUIREMENTS_FILE: ./${DJANGO_PROJECT_FOLDER:-django_project_folder}/requirements.txt
+        USER_ID: ${USER_ID:-1000}
+        GROUP_ID: ${GROUP_ID:-1000}
+    restart: unless-stopped
+    volumes:
+      # Only the Django project (manage.py) is mounted — live editing on the host
+      - ./${DJANGO_PROJECT_FOLDER:-django_project_folder}/django_project:/app
+    ports:
+      - "${DJANGO_PORT:-8000}:8000"
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-django_db}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_HOST: db
+      POSTGRES_PORT: 5432
+      DJANGO_DEBUG: ${DJANGO_DEBUG:-1}
+      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:-django-insecure-dev-only-change-me}
+      DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:-*}
+    depends_on:
+      db:
+        condition: service_healthy
+
+  db_backup:
+    image: postgres:16
+    restart: unless-stopped
+    entrypoint: ["/usr/local/bin/entrypoint.sh"]
+    environment:
+      POSTGRES_HOST: db
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-django_db}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      BACKUP_ROOT: /backups
+      BACKUP_KEEP_DAILY: ${BACKUP_KEEP_DAILY:-4}
+      BACKUP_KEEP_WEEKLY: ${BACKUP_KEEP_WEEKLY:-2}
+      BACKUP_KEEP_MONTHLY: ${BACKUP_KEEP_MONTHLY:-2}
+      BACKUP_HOUR: ${BACKUP_HOUR:-2}
+      BACKUP_MINUTE: ${BACKUP_MINUTE:-0}
+    volumes:
+      - ./docker/db_backup/backup.sh:/usr/local/bin/backup.sh:ro
+      - ./docker/db_backup/entrypoint.sh:/usr/local/bin/entrypoint.sh:ro
+      - db_backups:/backups
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+  pgadmin_data:
+  db_backups:
