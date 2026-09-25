@@ -37,14 +37,14 @@ services:
       context: .
       dockerfile: ./docker/django_web/Dockerfile
       args:
-        # requirements.txt lives next to the inner project folder
+        # requirements.txt lives in the outer project folder
         REQUIREMENTS_FILE: ./${DJANGO_PROJECT_FOLDER:-django_project_folder}/requirements.txt
         USER_ID: ${USER_ID:-1000}
         GROUP_ID: ${GROUP_ID:-1000}
     restart: unless-stopped
     volumes:
-      # Only the Django project (manage.py) is mounted — live editing on the host
-      - ./${DJANGO_PROJECT_FOLDER:-django_project_folder}/django_project:/app
+      # Inner app dir (contains manage.py) → /app
+      - ./${DJANGO_PROJECT_FOLDER:-django_project_folder}/${DJANGO_APP_DIR:-django_project}:/app
     ports:
       - "${DJANGO_PORT:-8000}:8000"
     environment:

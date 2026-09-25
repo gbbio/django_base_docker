@@ -10,9 +10,9 @@ project and replace the dummy site.
 .
 ├── docker-compose.yml
 ├── docker/
-├── django_project_folder/          # rename via DJANGO_PROJECT_FOLDER in .env
+├── django_project_folder/          # DJANGO_PROJECT_FOLDER
 │   ├── requirements.txt            # installed at image build time
-│   └── django_project/             # mounted at /app (manage.py lives here)
+│   └── django_project/             # DJANGO_APP_DIR → mounted at /app
 │       ├── manage.py
 │       └── config/
 └── .env
@@ -21,8 +21,8 @@ project and replace the dummy site.
 Compose mounts:
 
 ```text
-./django_project_folder/django_project  →  /app
-./django_project_folder/requirements.txt  (build arg only)
+./${DJANGO_PROJECT_FOLDER}/${DJANGO_APP_DIR}  →  /app
+./${DJANGO_PROJECT_FOLDER}/requirements.txt     (build only)
 ```
 
 ## What you get
@@ -49,79 +49,78 @@ If a port is already in use, change `DJANGO_PORT`, `POSTGRES_PORT`, or
 
 ## Start a new Django project
 
-Expected shape after setup:
+Target layout (this is what compose mounts):
 
 ```text
-<DJANGO_PROJECT_FOLDER>/
+test_project/                 ← DJANGO_PROJECT_FOLDER (.env)
   requirements.txt
-  django_project/
-    manage.py
-    ...
-```
-
-### 1. Choose a folder name
-
-In `.env`:
-
-```bash
-DJANGO_PROJECT_FOLDER=my_shop   # example — use your name
-```
-
-### 2. Create the folders and project
-
-Remove the dummy (or keep it and use a different `DJANGO_PROJECT_FOLDER`):
-
-```bash
-rm -rf django_project_folder   # only if you are replacing the dummy
-```
-
-Create the outer folder **and** the inner `django_project` directory (Django requires
-the destination to exist):
-
-```bash
-mkdir -p my_shop/django_project
-```
-
-Create the Django project so `manage.py` ends up in `my_shop/django_project/`:
-
-```bash
-docker run --rm \
-  -v "$(pwd)/my_shop:/out" \
-  -w /out \
-  python:3.12-slim \
-  bash -c "pip install --no-cache-dir Django==5.1.3 \
-    && django-admin startproject config django_project \
-    && chown -R $(id -u):$(id -g) django_project"
-```
-
-That produces:
-
-```text
-my_shop/
-  django_project/
-    manage.py
+  django_project/             ← DJANGO_APP_DIR (.env), mounted as /app
+    manage.py                 ← must be directly here, not one level deeper
     config/
 ```
 
-### 3. Add requirements
+Compose does:
+
+```text
+./${DJANGO_PROJECT_FOLDER}/${DJANGO_APP_DIR}  →  /app
+./${DJANGO_PROJECT_FOLDER}/requirements.txt   →  used at image build
+```
+
+### 1. Set names in `.env`
 
 ```bash
-cat > my_shop/requirements.txt <<'EOF'
+COMPOSE_PROJECT_NAME=test_project
+DJANGO_PROJECT_FOLDER=test_project
+DJANGO_APP_DIR=django_project
+```
+
+Use free ports if another stack is already running (e.g. `DJANGO_PORT=8020`).
+
+### 2. Create folders
+
+```bash
+# optional: remove the dummy
+rm -rf django_project_folder
+
+mkdir -p test_project/django_project
+```
+
+### 3. Generate Django **into the mounted folder** (use `.`)
+
+Important: mount the **inner** folder and run `startproject config .`  
+Do **not** use `startproject config django_project` — that creates an extra nested folder.
+
+```bash
+docker run --rm \
+  -v "$(pwd)/test_project/django_project:/out" \
+  -w /out \
+  python:3.12-slim \
+  bash -c "pip install --no-cache-dir Django==5.1.3 \
+    && django-admin startproject config . \
+    && chown -R $(id -u):$(id -g) ."
+```
+
+Result:
+
+```text
+test_project/django_project/manage.py
+test_project/django_project/config/
+```
+
+Inside the container that becomes `/app/manage.py` (correct).
+
+### 4. Add requirements
+
+```bash
+cat > test_project/requirements.txt <<'EOF'
 Django==5.1.3
 psycopg2-binary==2.9.10
 EOF
 ```
 
-Add more packages here as the app grows. After changing this file, rebuild:
+### 5. Wire Django to Postgres
 
-```bash
-docker compose up -d --build
-```
-
-### 4. Wire Django to Postgres
-
-In `my_shop/django_project/config/settings.py` (or your settings module), use env
-vars matching compose:
+In `test_project/django_project/config/settings.py`:
 
 ```python
 import os
@@ -140,14 +139,13 @@ DATABASES = {
 ALLOWED_HOSTS = os.environ.get('DJANGO_ALLOWED_HOSTS', '*').split(',')
 ```
 
-### 5. Start the stack
+### 6. Start
 
 ```bash
 docker compose up -d --build
 ```
 
-Edit files under `my_shop/django_project/` on the host; the container picks up
-changes via the bind mount.
+Check: `docker compose exec django_web ls` should show `manage.py` and `config`.
 
 ## Docker usage
 
