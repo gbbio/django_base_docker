@@ -49,73 +49,67 @@ If a port is already in use, change `DJANGO_PORT`, `POSTGRES_PORT`, or
 
 ## Start a new Django project
 
-Target layout (this is what compose mounts):
+Target layout:
 
 ```text
-test_project/                 ← DJANGO_PROJECT_FOLDER (.env)
-  requirements.txt
-  django_project/             ← DJANGO_APP_DIR (.env), mounted as /app
-    manage.py                 ← must be directly here, not one level deeper
+test_project/                 ← DJANGO_PROJECT_FOLDER
+  requirements.txt            ← installed when you build the image
+  django_project/             ← DJANGO_APP_DIR → /app
+    manage.py
     config/
 ```
 
-Compose does:
+Create the project **with the compose `django_web` image** so the Django version
+comes from your `requirements.txt` (not a separate `docker run`).
 
-```text
-./${DJANGO_PROJECT_FOLDER}/${DJANGO_APP_DIR}  →  /app
-./${DJANGO_PROJECT_FOLDER}/requirements.txt   →  used at image build
-```
-
-### 1. Set names in `.env`
+### 1. Configure `.env`
 
 ```bash
 COMPOSE_PROJECT_NAME=test_project
 DJANGO_PROJECT_FOLDER=test_project
 DJANGO_APP_DIR=django_project
+USER_ID=1000          # use $(id -u)
+GROUP_ID=1000         # use $(id -g)
 ```
 
-Use free ports if another stack is already running (e.g. `DJANGO_PORT=8020`).
+Use free ports if another stack is running (e.g. `DJANGO_PORT=8020`).
 
-### 2. Create folders
+### 2. Folders + requirements (before build)
 
 ```bash
 # optional: remove the dummy
 rm -rf django_project_folder
 
 mkdir -p test_project/django_project
-```
 
-### 3. Generate Django **into the mounted folder** (use `.`)
-
-Important: mount the **inner** folder and run `startproject config .`  
-Do **not** use `startproject config django_project` — that creates an extra nested folder.
-
-```bash
-docker run --rm \
-  -v "$(pwd)/test_project/django_project:/out" \
-  -w /out \
-  python:3.12-slim \
-  bash -c "pip install --no-cache-dir Django==5.1.3 \
-    && django-admin startproject config . \
-    && chown -R $(id -u):$(id -g) ."
-```
-
-Result:
-
-```text
-test_project/django_project/manage.py
-test_project/django_project/config/
-```
-
-Inside the container that becomes `/app/manage.py` (correct).
-
-### 4. Add requirements
-
-```bash
 cat > test_project/requirements.txt <<'EOF'
 Django==5.1.3
 psycopg2-binary==2.9.10
 EOF
+```
+
+Change the Django pin here whenever you want a different version.
+
+### 3. Build the image (installs requirements)
+
+```bash
+docker compose build django_web
+```
+
+### 4. Create the project inside the compose container
+
+`--no-deps` skips starting Postgres; the empty `/app` mount is your new app dir.
+Use `.` so `manage.py` lands directly in `/app` (no extra nested folder).
+
+```bash
+docker compose run --rm --no-deps django_web django-admin startproject config .
+```
+
+Result on the host:
+
+```text
+test_project/django_project/manage.py
+test_project/django_project/config/
 ```
 
 ### 5. Wire Django to Postgres
@@ -139,13 +133,15 @@ DATABASES = {
 ALLOWED_HOSTS = os.environ.get('DJANGO_ALLOWED_HOSTS', '*').split(',')
 ```
 
-### 6. Start
+### 6. Start the stack
 
 ```bash
-docker compose up -d --build
+docker compose up -d
 ```
 
 Check: `docker compose exec django_web ls` should show `manage.py` and `config`.
+
+After changing `requirements.txt`, rebuild: `docker compose up -d --build`.
 
 ## Docker usage
 
