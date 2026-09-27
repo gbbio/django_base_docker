@@ -17,6 +17,7 @@ WORKDIR /app
 
 ARG REQUIREMENTS_FILE=./django_project_folder/requirements.txt
 COPY ${REQUIREMENTS_FILE} /tmp/requirements.txt
+
 RUN pip install --upgrade pip && \
     pip install -r /tmp/requirements.txt && \
     rm /tmp/requirements.txt

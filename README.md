@@ -1,120 +1,78 @@
 # django_base_docker
 
-Reusable Docker setup for local Django development. `docker-compose.yml` and
-`docker/` sit next to your Django code so you can copy this repo into a new
-project and replace the dummy site.
+Docker Compose base for local Django development: Postgres, pgAdmin, Django, and DB backups.
 
 ## Layout
 
 ```text
-.
-├── docker-compose.yml
-├── docker/
-├── django_project_folder/          # DJANGO_PROJECT_FOLDER
-│   ├── requirements.txt            # installed at image build time
-│   └── django_project/             # DJANGO_APP_DIR → mounted at /app
-│       ├── manage.py
-│       └── config/
-└── .env
-```
-
-Compose mounts:
-
-```text
-./${DJANGO_PROJECT_FOLDER}/${DJANGO_APP_DIR}  →  /app
-./${DJANGO_PROJECT_FOLDER}/requirements.txt     (build only)
-```
-
-## What you get
-
-| Service | Host URL (defaults) | Purpose |
-|---------|---------------------|---------|
-| `django_web` | http://localhost:8000 | Django runserver (code bind-mounted) |
-| `db` | localhost:5433 | PostgreSQL 16 (container still uses 5432) |
-| `pgadmin` | http://localhost:5050 | DB UI (`admin@admin.com` / `admin`) |
-| `db_backup` | (volume `db_backups`) | Daily/weekly/monthly `pg_dump` (keep 4 / 2 / 2) |
-
-## Quick start (dummy project)
-
-```bash
-cp .env.example .env
-# optional: set USER_ID/GROUP_ID to $(id -u) / $(id -g)
-docker compose up -d --build
-```
-
-Open http://localhost:8000 — you should see the dummy homepage.
-
-If a port is already in use, change `DJANGO_PORT`, `POSTGRES_PORT`, or
-`PGADMIN_PORT` in `.env` and run `docker compose up -d` again.
-
-## Start a new Django project
-
-Target layout:
-
-```text
-test_project/                 ← DJANGO_PROJECT_FOLDER
-  requirements.txt            ← installed when you build the image
-  django_project/             ← DJANGO_APP_DIR → /app
+django_project_folder/          ← DJANGO_PROJECT_FOLDER
+  requirements.txt
+  django_project/               ← DJANGO_APP_DIR → mounted at /app
     manage.py
     config/
 ```
 
-Create the project **with the compose `django_web` image** so the Django version
-comes from your `requirements.txt` (not a separate `docker run`).
-
-### 1. Configure `.env`
+## 1. Configure
 
 ```bash
-COMPOSE_PROJECT_NAME=test_project
-DJANGO_PROJECT_FOLDER=test_project
-DJANGO_APP_DIR=django_project
-USER_ID=1000          # use $(id -u)
-GROUP_ID=1000         # use $(id -g)
+cp .env.example .env
 ```
 
-Use free ports if another stack is running (e.g. `DJANGO_PORT=8020`).
-
-### 2. Folders + requirements (before build)
+Edit `.env`:
 
 ```bash
-# optional: remove the dummy
-rm -rf django_project_folder
+COMPOSE_PROJECT_NAME=my_project
+DJANGO_PROJECT_FOLDER=my_project
+DJANGO_APP_DIR=django_project
 
-mkdir -p test_project/django_project
+# Host user (required — avoids root-owned files on the bind mount)
+# Run: id -u   and   id -g
+USER_ID=1000
+GROUP_ID=1000
 
-cat > test_project/requirements.txt <<'EOF'
+# Change ports if something else already uses them
+DJANGO_PORT=8000
+POSTGRES_PORT=5433
+PGADMIN_PORT=5050
+```
+
+Create folders and requirements:
+
+```bash
+rm -rf django_project_folder          # remove dummy if present
+mkdir -p my_project/django_project
+
+cat > my_project/requirements.txt <<'EOF'
 Django==5.1.3
 psycopg2-binary==2.9.10
 EOF
 ```
 
-Change the Django pin here whenever you want a different version.
+If you change `POSTGRES_PASSWORD`, also update `docker/pgadmin/pgpass` to match.
 
-### 3. Build the image (installs requirements)
-
-```bash
-docker compose build django_web
-```
-
-### 4. Create the project inside the compose container
-
-`--no-deps` skips starting Postgres; the empty `/app` mount is your new app dir.
-Use `.` so `manage.py` lands directly in `/app` (no extra nested folder).
+## 2. Start the stack
 
 ```bash
-docker compose run --rm --no-deps django_web django-admin startproject config .
+docker compose up -d --build
 ```
 
-Result on the host:
+## 3. Create the Django project
 
-```text
-test_project/django_project/manage.py
-test_project/django_project/config/
+Enter the container (workdir is `/app` = your empty `django_project` folder):
+
+```bash
+docker compose exec django_web bash
 ```
 
-### 5. Wire Django to Postgres
+Inside the container:
 
-In `test_project/django_project/config/settings.py`:
+```bash
+django-admin startproject config .
+```
+
+Use `.` so `manage.py` is created in `/app` directly (not in a nested folder).
+
+Then wire Postgres in `config/settings.py`:
 
 ```python
 import os
@@ -133,110 +91,77 @@ DATABASES = {
 ALLOWED_HOSTS = os.environ.get('DJANGO_ALLOWED_HOSTS', '*').split(',')
 ```
 
-### 6. Start the stack
+Start Django (still inside the container, or from the host):
 
 ```bash
-docker compose up -d
+start_django
+# or foreground:
+python manage.py runserver 0.0.0.0:8000
 ```
-
-Check: `docker compose exec django_web ls` should show `manage.py` and `config`.
-
-After changing `requirements.txt`, rebuild: `docker compose up -d --build`.
-
-## Docker usage
-
-```bash
-docker compose up -d
-docker compose up -d --build
-docker compose down
-docker compose down -v   # also remove DB/pgAdmin/backup volumes
-```
-
-Project name comes from `COMPOSE_PROJECT_NAME` in `.env` (default `django_base`).
-
-## Django container
-
-```bash
-docker compose exec django_web bash
-```
-
-Inside the container:
 
 ```bash
 stop_django
-start_django
-python manage.py runserver 0.0.0.0:8000   # foreground
 ```
 
-On start, the entrypoint waits for Postgres, runs `migrate`, then starts runserver
-in the background while keeping the container alive.
+On container start, the entrypoint runs `migrate` and `runserver` automatically when `manage.py` exists. After creating the project the first time, recreate the web container once:
+
+```bash
+exit
+docker compose up -d --force-recreate django_web
+```
+
+| Service | URL |
+|---------|-----|
+| Django | http://localhost:8000 (after you create the project below) |
+| pgAdmin | http://localhost:5050 (`admin@admin.com` / `admin`) |
+| Postgres | localhost:5433 |
+
+Useful commands:
+
+```bash
+docker compose down
+docker compose down -v              # also delete volumes
+docker compose up -d --build        # after changing requirements.txt
+```
+## Django helpers
+
+```bash
+docker compose exec django_web bash
+docker compose exec django_web start_django
+docker compose exec django_web stop_django
+```
+
+## pgAdmin
+
+Open http://localhost:5050 → **Servers → django_db** (pre-registered via `docker/pgadmin/servers.json`).
+
+Server list is imported only on first start. To reload it:
+
+```bash
+docker compose down
+docker volume rm ${COMPOSE_PROJECT_NAME:-django_base}_pgadmin_data
+docker compose up -d
+```
 
 ## Database backups
 
-`db_backup` uses the same `postgres:16` image and `docker/db_backup/backup.sh`.
-Dumps are stored in the Docker volume `db_backups` (paths below are inside the
-`db_backup` container).
-
-### Schedule and retention
-
-| Type | When | Keep |
-|------|------|------|
-| daily | every day at schedule time | 4 |
-| weekly | Sundays | 2 |
-| monthly | 1st of the month | 2 |
-| manual | only when you pass a name | forever (until you delete it) |
-
-Default schedule: `BACKUP_HOUR`:`BACKUP_MINUTE` (UTC), configurable in `.env`.
-
-### List backups
+Service `db_backup` runs daily at `BACKUP_HOUR`:`BACKUP_MINUTE` (UTC). Keeps 4 daily, 2 weekly, 2 monthly. Named backups are never auto-deleted.
 
 ```bash
-docker compose exec db_backup ls -lah /backups/daily /backups/weekly /backups/monthly /backups/manual
-```
-
-### Run a scheduled-style backup now
-
-Creates a daily dump and applies retention pruning (weekly/monthly only if today
-matches those rules):
-
-```bash
-docker compose exec db_backup /usr/local/bin/backup.sh
-```
-
-### Named manual backup
-
-Pass a name (letters, numbers, `.`, `_`, `-`). The file is written to
-`/backups/manual/<name>.sql.gz` and is **never** auto-pruned.
-
-```bash
-# Create
-docker compose exec db_backup /usr/local/bin/backup.sh before-migration
-
 # List
-docker compose exec db_backup ls -lah /backups/manual
+docker compose exec db_backup ls -lah /backups/daily /backups/weekly /backups/monthly /backups/manual
 
-# Remove when you no longer need it
+# Run now (scheduled-style)
+docker compose exec db_backup /usr/local/bin/backup.sh
+
+# Named manual backup (kept until you delete it)
+docker compose exec db_backup /usr/local/bin/backup.sh before-migration
 docker compose exec db_backup rm /backups/manual/before-migration.sql.gz
-```
 
-If that name already exists, the script exits with an error — delete it first or
-choose another name.
-
-### Restore
-
-Copy a dump out of the volume (or stream it), then load with `psql`. Prefer
-stopping Django first so nothing writes during restore.
-
-```bash
-# Example: restore a named manual backup
+# Restore example
 docker compose exec django_web stop_django
-
 docker compose exec -T db_backup cat /backups/manual/before-migration.sql.gz \
   | gunzip \
   | docker compose exec -T db psql -U postgres -d django_db
-
 docker compose exec django_web start_django
 ```
-
-Replace the path with a file under `/backups/daily/`, `/backups/weekly/`, or
-`/backups/monthly/` as needed.
